@@ -1,6 +1,6 @@
 import { getIO } from "../socket.js"
-import Patient from "../models/Patient.js";
-import Clinic from "../models/Clinic.js";
+import Patient from "../models/patient.js";
+import Clinic from "../models/clinic.js";
 
 // ===============================
 // Helpers
