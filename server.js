@@ -4,7 +4,7 @@ dotenv.config();
 import http from "http";
 
 import app from "./app.js";
-import connectDB from "./config/database.js";
+import connectDB from "./config/dataBase.js";
 import { initializeSocket } from "./socket.js";
 
 const PORT = process.env.PORT || 5000 ;
