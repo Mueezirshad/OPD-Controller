@@ -18,6 +18,42 @@ const getCurrentTime = () => {
     });
 };
 
+const recalculateQueue = async (clinic) => {
+
+    const today = getToday();
+
+    const waitingPatients = await Patient.find({
+        visitDate: today,
+        status: "Waiting",
+    }).sort({
+        tokenNumber: 1,
+    });
+
+    let peopleAhead = 0;
+
+    for (const patient of waitingPatients) {
+
+        patient.peopleAhead = peopleAhead;
+
+        if (patient.emergency) {
+
+            patient.estimatedTime = 0;
+
+        } else {
+
+            patient.estimatedTime =
+                peopleAhead * clinic.averageConsultationTime;
+
+        }
+
+        await patient.save();
+
+        peopleAhead++;
+
+    }
+
+};
+
 // ===============================
 // Reserve Token
 // ===============================
@@ -191,7 +227,7 @@ if (
             emergency,
             emergencyFee: emergency ? clinic.emergencyFee : 0,
             estimatedTime,
-            position: peopleAhead,
+            peopleAhead,
             status: "Waiting",
             visitDate: today,
             bookingTime: getCurrentTime(),
@@ -374,79 +410,11 @@ export const nextToken = async (req, res) => {
 
         await clinic.save();
 
-        // ===============================
-// Recalculate Queue
-// ===============================
-
-const recalculateQueue = async (clinic) => {
-
-    const today = getToday();
-
-    const waitingPatients = await Patient.find({
-        visitDate: today,
-        status: "Waiting",
-    }).sort({
-        tokenNumber: 1,
-    });
-
-    let peopleAhead = 0;
-
-    for (const patient of waitingPatients) {
-
-        patient.peopleAhead = peopleAhead;
-
-        if (patient.emergency) {
-
-            patient.estimatedTime = 0;
-
-        } else {
-
-            patient.estimatedTime =
-                peopleAhead * clinic.averageConsultationTime;
-
-        }
-
-        await patient.save();
-await recalculateQueue(clinic);
-        peopleAhead++;
-
-    }
-
-};
-        
         // ============================
         // Recalculate Waiting Queue
         // ============================
 
-        const waitingPatients = await Patient.find({
-            visitDate: today,
-            status: "Waiting"
-        }).sort({
-            tokenNumber: 1
-        });
-
-        let peopleAhead = 1;
-
-        for (const patient of waitingPatients) {
-
-            patient.peopleAhead = peopleAhead;
-
-            if (patient.emergency) {
-
-                patient.estimatedTime = 0;
-
-            } else {
-
-                patient.estimatedTime =
-                    peopleAhead * clinic.averageConsultationTime;
-
-            }
-
-            await patient.save();
-
-            peopleAhead++;
-
-        }
+        await recalculateQueue(clinic);
 
         // Socket
 
@@ -489,6 +457,15 @@ export const cancelToken = async (req, res) => {
         const { id } = req.params;
 
         const clinic = await Clinic.findOne();
+
+        if (!clinic) {
+
+            return res.status(404).json({
+                success: false,
+                message: "Clinic not found.",
+            });
+
+        }
 
         const patient = await Patient.findById(id);
 
@@ -559,6 +536,15 @@ export const pauseQueue = async (req, res) => {
 
         const clinic = await Clinic.findOne();
 
+        if (!clinic) {
+
+            return res.status(404).json({
+                success: false,
+                message: "Clinic not found.",
+            });
+
+        }
+
         clinic.paused = true;
 
         await clinic.save();
@@ -597,6 +583,15 @@ export const resumeQueue = async (req, res) => {
 
         const clinic = await Clinic.findOne();
 
+        if (!clinic) {
+
+            return res.status(404).json({
+                success: false,
+                message: "Clinic not found.",
+            });
+
+        }
+
         clinic.paused = false;
 
         await clinic.save();
@@ -633,6 +628,15 @@ export const dashboardStats = async (req, res) => {
         const today = getToday();
 
         const clinic = await Clinic.findOne();
+
+        if (!clinic) {
+
+            return res.status(404).json({
+                success: false,
+                message: "Clinic not found.",
+            });
+
+        }
 
         const totalPatients = await Patient.countDocuments({
             visitDate: today,
