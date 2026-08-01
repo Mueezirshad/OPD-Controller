@@ -201,6 +201,23 @@ if (
         }
 
         // ==========================
+        // Already Cancelled Today
+        // ==========================
+
+        const cancelledToken = await Patient.findOne({
+            phone,
+            visitDate: today,
+            status: "Cancelled",
+        });
+
+        if (cancelledToken) {
+            return res.status(400).json({
+                success: false,
+                message: "You have already cancelled your token today. Please try again tomorrow.",
+            });
+        }
+
+        // ==========================
         // Generate Token
         // ==========================
 
