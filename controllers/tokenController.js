@@ -26,6 +26,7 @@ const recalculateQueue = async (clinic) => {
         visitDate: today,
         status: "Waiting",
     }).sort({
+        emergency: -1,
         tokenNumber: 1,
     });
 
@@ -35,16 +36,7 @@ const recalculateQueue = async (clinic) => {
 
         patient.peopleAhead = peopleAhead;
 
-        if (patient.emergency) {
-
-            patient.estimatedTime = 0;
-
-        } else {
-
-            patient.estimatedTime =
-                peopleAhead * clinic.averageConsultationTime;
-
-        }
+        patient.estimatedTime = peopleAhead * clinic.averageConsultationTime;
 
         await patient.save();
 
@@ -126,6 +118,22 @@ export const reserveToken = async (req, res) => {
 
             await clinic.save();
         }
+
+        // ==========================
+        // Daily Token Limit
+        // ==========================
+
+        const bookedToday = await Patient.countDocuments({
+            visitDate: today,
+            status: { $ne: "Cancelled" },
+        });
+
+        if (bookedToday >= clinic.dailyLimit) {
+            return res.status(400).json({
+                success: false,
+                message: "Sorry, today's tokens are full. Please visit tomorrow.",
+            });
+        }
 // ==========================
 // Clinic Timing Validation
 // ==========================
@@ -201,22 +209,29 @@ if (
         }
 
         // ==========================
+        // Cancelled Within Last 24 Hours
+        // ==========================
+
+        const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
+
+        const recentlyCancelled = await Patient.findOne({
+            phone,
+            status: "Cancelled",
+            updatedAt: { $gte: twentyFourHoursAgo },
+        }).sort({ updatedAt: -1 });
+
+        if (recentlyCancelled) {
+            return res.status(400).json({
+                success: false,
+                message: "You cancelled your last token recently. Please try again after 24 hours.",
+            });
+        }
+
+        // ==========================
         // Generate Token
         // ==========================
 
         const tokenNumber = clinic.nextToken;
-
-        const peopleAhead = Math.max(
-            tokenNumber - clinic.currentToken - 1,
-            0
-        );
-
-        let estimatedTime = 0;
-
-        if (!emergency) {
-            estimatedTime =
-                peopleAhead * clinic.averageConsultationTime;
-        }
 
         const patient = await Patient.create({
             tokenNumber,
@@ -226,8 +241,8 @@ if (
             gender,
             emergency,
             emergencyFee: emergency ? clinic.emergencyFee : 0,
-            estimatedTime,
-            peopleAhead,
+            estimatedTime: 0,
+            peopleAhead: 0,
             status: "Waiting",
             visitDate: today,
             bookingTime: getCurrentTime(),
@@ -236,6 +251,14 @@ if (
         clinic.nextToken += 1;
 
         await clinic.save();
+
+        // Recalculate so emergency patients correctly jump ahead of
+        // already-waiting regular patients, then re-read this patient's
+        // real position for the response.
+
+        await recalculateQueue(clinic);
+
+        const updatedPatient = await Patient.findById(patient._id);
 
         // ==========================
         // Socket
@@ -252,26 +275,28 @@ if (
         if (emergency) {
             return res.status(201).json({
                 success: true,
-                message: "Emergency Token Reserved Successfully",
-                data: {
-                    tokenNumber: patient.tokenNumber,
-                    emergency: true,
-                    emergencyFee: clinic.emergencyFee,
-                    message:
-                        "Please reach the clinic immediately.",
-                },
+                message: "Please reach the clinic immediately.",
+                patientName: updatedPatient.patientName,
+                tokenNumber: updatedPatient.tokenNumber,
+                currentToken: clinic.currentToken,
+                peopleAhead: updatedPatient.peopleAhead,
+                estimatedTime: updatedPatient.estimatedTime,
+                emergency: true,
+                emergencyFee: clinic.emergencyFee,
+                status: updatedPatient.status,
             });
         }
 
         return res.status(201).json({
             success: true,
             message: "Token Reserved Successfully",
-            data: {
-                tokenNumber: patient.tokenNumber,
-                estimatedTime: patient.estimatedTime,
-                peopleAhead,
-                currentToken: clinic.currentToken,
-            },
+            patientName: updatedPatient.patientName,
+            tokenNumber: updatedPatient.tokenNumber,
+            estimatedTime: updatedPatient.estimatedTime,
+            peopleAhead: updatedPatient.peopleAhead,
+            currentToken: clinic.currentToken,
+            emergency: updatedPatient.emergency,
+            status: updatedPatient.status,
         });
 
     } catch (error) {
@@ -389,6 +414,7 @@ export const nextToken = async (req, res) => {
             visitDate: today,
             status: "Waiting"
         }).sort({
+            emergency: -1,
             tokenNumber: 1
         });
 
@@ -446,6 +472,93 @@ export const nextToken = async (req, res) => {
 
     }
 };
+// ===============================
+// Skip Token (patient did not show up)
+// ===============================
+
+export const skipToken = async (req, res) => {
+    try {
+
+        const clinic = await Clinic.findOne();
+
+        if (!clinic) {
+            return res.status(404).json({
+                success: false,
+                message: "Clinic not found.",
+            });
+        }
+
+        const today = getToday();
+
+        const currentPatient = await Patient.findOne({
+            visitDate: today,
+            status: "Current",
+        });
+
+        if (!currentPatient) {
+            return res.status(400).json({
+                success: false,
+                message: "No patient is currently being attended.",
+            });
+        }
+
+        currentPatient.status = "Skipped";
+
+        await currentPatient.save();
+
+        const nextPatient = await Patient.findOne({
+            visitDate: today,
+            status: "Waiting",
+        }).sort({
+            emergency: -1,
+            tokenNumber: 1,
+        });
+
+        if (!nextPatient) {
+
+            const io = getIO();
+
+            io.emit("queueUpdated");
+
+            return res.status(200).json({
+                success: true,
+                message: "Patient skipped. No patient remaining.",
+            });
+        }
+
+        nextPatient.status = "Current";
+        nextPatient.calledAt = getCurrentTime();
+
+        await nextPatient.save();
+
+        clinic.currentToken = nextPatient.tokenNumber;
+
+        await clinic.save();
+
+        await recalculateQueue(clinic);
+
+        const io = getIO();
+
+        io.emit("queueUpdated");
+
+        return res.status(200).json({
+            success: true,
+            message: "Patient skipped, next patient called.",
+            patient: nextPatient,
+        });
+
+    } catch (error) {
+
+        console.log(error);
+
+        return res.status(500).json({
+            success: false,
+            message: error.message,
+        });
+
+    }
+};
+
 // ===============================
 // Cancel Token
 // ===============================
@@ -665,17 +778,15 @@ export const dashboardStats = async (req, res) => {
 
         return res.status(200).json({
             success: true,
-            data: {
-                currentToken: clinic.currentToken,
-                nextToken: clinic.nextToken,
-                paused: clinic.paused,
-                clinicStatus: clinic.clinicStatus,
-                totalPatients,
-                waitingPatients,
-                completedPatients,
-                emergencyPatients,
-                currentPatient,
-            },
+            currentToken: clinic.currentToken,
+            nextToken: clinic.nextToken,
+            paused: clinic.paused,
+            clinicStatus: clinic.clinicStatus,
+            totalPatients,
+            waitingPatients,
+            completedPatients,
+            emergencyPatients,
+            currentPatient,
         });
 
     } catch (error) {
@@ -699,6 +810,7 @@ export const getWaitingPatients = async (req, res) => {
             visitDate: getToday(),
             status: "Waiting",
         }).sort({
+            emergency: -1,
             tokenNumber: 1,
         });
 
@@ -819,23 +931,19 @@ export const searchMyToken = async (req, res) => {
 
             success: true,
 
-            data: {
+            patientName: patient.patientName,
 
-                patientName: patient.patientName,
+            tokenNumber: patient.tokenNumber,
 
-                tokenNumber: patient.tokenNumber,
+            currentToken: clinic.currentToken,
 
-                currentToken: clinic.currentToken,
+            peopleAhead: patient.peopleAhead,
 
-                peopleAhead: patient.peopleAhead,
+            estimatedTime: patient.estimatedTime,
 
-                estimatedTime: patient.estimatedTime,
+            emergency: patient.emergency,
 
-                emergency: patient.emergency,
-
-                status: patient.status
-
-            }
+            status: patient.status
 
         });
 

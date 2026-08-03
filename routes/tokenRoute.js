@@ -6,6 +6,7 @@ import {
     reserveToken,
     getCurrentQueue,
     nextToken,
+    skipToken,
     pauseQueue,
     resumeQueue,
     dashboardStats,
@@ -25,6 +26,8 @@ router.post("/search", searchMyToken);
 router.get("/current", getCurrentQueue);
 
 router.put("/next", auth, nextToken);
+
+router.put("/skip", auth, skipToken);
 
 router.put("/pause", auth, pauseQueue);
 

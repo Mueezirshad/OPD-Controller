@@ -59,6 +59,11 @@ const clinicSchema = new mongoose.Schema(
             default: 500,
         },
 
+        dailyLimit: {
+            type: Number,
+            default: 50,
+        },
+
         clinicStatus: {
             type: String,
             enum: ["Open", "Break", "Closed"],
