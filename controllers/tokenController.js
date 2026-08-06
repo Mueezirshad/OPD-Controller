@@ -6,16 +6,28 @@ import Clinic from "../models/clinic.js";
 // Helpers
 // ===============================
 
+const CLINIC_TZ = "Asia/Karachi";
+
 const getToday = () => {
-    return new Date().toISOString().split("T")[0];
+    return new Date().toLocaleDateString("en-CA", { timeZone: CLINIC_TZ });
 };
 
 const getCurrentTime = () => {
     return new Date().toLocaleTimeString("en-PK", {
+        timeZone: CLINIC_TZ,
         hour: "2-digit",
         minute: "2-digit",
         hour12: true,
     });
+};
+
+const getClinicMinutesNow = () => {
+    const [hours, minutes] = new Date()
+        .toLocaleTimeString("en-GB", { timeZone: CLINIC_TZ, hour12: false })
+        .split(":")
+        .map(Number);
+
+    return hours * 60 + minutes;
 };
 
 const recalculateQueue = async (clinic) => {
@@ -138,8 +150,6 @@ export const reserveToken = async (req, res) => {
 // Clinic Timing Validation
 // ==========================
 
-const now = new Date();
-
 const convertToMinutes = (time) => {
     const [timePart, period] = time.split(" ");
     let [hours, minutes] = timePart.split(":").map(Number);
@@ -150,8 +160,7 @@ const convertToMinutes = (time) => {
     return hours * 60 + minutes;
 };
 
-const currentMinutes =
-    now.getHours() * 60 + now.getMinutes();
+const currentMinutes = getClinicMinutesNow();
 
 const openingMinutes = convertToMinutes(clinic.openingTime);
 
