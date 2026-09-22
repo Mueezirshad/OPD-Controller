@@ -44,12 +44,15 @@ export const createClinic = async (req, res) => {
 
 export const updateClinic = async (req, res) => {
     try {
-        const clinic = await Clinic.findOne();
+        let clinic = await Clinic.findOne();
 
         if (!clinic) {
-            return res.status(404).json({
-                success: false,
-                message: "Clinic not found",
+            clinic = await Clinic.create(req.body);
+
+            return res.status(201).json({
+                success: true,
+                message: "Clinic created successfully",
+                clinic,
             });
         }
 
